@@ -1,0 +1,32 @@
+# 编译产物
+build/
+bin/
+obj/
+Debug/
+Release/
+x64/
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Qt 自动生成文件
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+Makefile
+*.pro.user
+CMakeCache.txt
+CMakeFiles/
+
+# 数据库文件（保护你的本地配置隐私）
+*.db
+*.sqlite
+data.db
+
+# 编辑器配置
+.vs/
+.vscode/
+.idea/

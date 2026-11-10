@@ -1,0 +1,5 @@
+// Application icon embedded into the .exe.
+// Windows only accepts .ico here (a .png cannot be embedded as an exe icon).
+// "main.ico" is resolved through the /I include directory that CMakeLists.txt
+// adds for this file, so it does not depend on the build working directory.
+1 ICON DISCARDABLE "main.ico"
