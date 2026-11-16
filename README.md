@@ -38,7 +38,7 @@
 
 ```bash
 # 克隆代码
-git clone https://github.com/你的GitHub用户名/Huan.git
+git clone https://github.com/ling1yao0/Huan.git
 cd Huan
 
 # 配置 CMake (请确保安装了 Qt 6)
