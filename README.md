@@ -6,7 +6,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Language-C%2B%2B20-blue.svg" alt="C++20">
   <img src="https://img.shields.io/badge/Framework-Qt6-green.svg" alt="Qt6">
-  <img src="https://img.shields.io/badge/Platform-Windows-lightgrey.svg" alt="Windows">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11-lightgrey.svg" alt="Windows">
   <img src="https://img.shields.io/badge/License-GPLv3-orange.svg" alt="GPLv3">
 </p>
 
@@ -21,28 +21,25 @@
 
 ## ✨ 核心特性
 
-- ⚡ **原生极速**：底层基于 Win32 API 低级钩子拦截，毫秒级响应。
+- ⚡ **原生极速**：底层基于 Win32 API 低级钩子拦截，毫秒级响应，拒绝卡顿。
 - 🎯 **多环轮盘**：支持 8+16+32 扇区嵌套，完美匹配你的肌肉记忆；支持外圈隐藏动作，盲操更顺手。
-- 🗂️ **场景隔离**：根据前台窗口进程名，自动匹配专属的轮盘与动作页。新场景自动继承全局配置。
+- 🗂️ **场景隔离**：根据前台窗口进程名自动匹配专属配置。新场景自动继承全局配置，支持局部独立覆盖。
 - 🛠️ **自动化流水线**：内置多步流水线引擎、按键宏录制、变量解析（如 `{clipboard}`、`{time}`）。
 - 🐍 **外部脚本支持**：无缝调用 Python / PowerShell / Batch 脚本，极客的扩展无边无际。
-- 🔒 **完全本地化**：数据保存在本地 SQLite，支持一键导入/导出 JSON 备份。不上传任何隐私数据。
+- 🔒 **完全本地化**：数据保存在本地 SQLite 数据库，支持一键备份，不上传任何隐私数据。
+- 🚀 **静默高权限**：开机自启采用 Windows 任务计划程序，完美兼容提权软件（如 Notepad++、Keil）的按键注入。
+
+---
 
 ## 🚀 快速开始
 
-### 方式一：直接下载安装包
-前往 [Releases] 页面，下载最新版本的安装包
+### 方式一：直接下载安装包（推荐）
+前往 [Releases](https://github.com/ling1yao0/Huan/releases) 页面，下载最新的 `Huan_Setup.exe` 安装包。程序会自动完成环境部署。
 
 ### 方式二：从源码编译 (开发者)
-本项目使用 CMake 构建，依赖于 Qt 6.5+ 和 MSVC 2022。
+环境要求：Windows 10/11、Visual Studio 2022、Qt 6.12（msvc2022_64）、CMake 3.21+。
 
-```bash
-# 克隆代码
-git clone https://github.com/ling1yao0/Huan.git
-cd Huan
-
-# 配置 CMake (请确保安装了 Qt 6)
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:\Qt\6.x.x\msvc2022_64"
-
-# 编译
+```powershell
+# 配置并编译
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.12.0/msvc2022_64"
 cmake --build build --config Release

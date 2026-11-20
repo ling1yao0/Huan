@@ -3,3 +3,8 @@
 // "main.ico" is resolved through the /I include directory that CMakeLists.txt
 // adds for this file, so it does not depend on the build working directory.
 1 ICON DISCARDABLE "main.ico"
+
+// 提权清单（RT_MANIFEST = 24，资源 ID 1）。
+// 这里的 "app.manifest" 是相对构建目录的路径：CMakeLists.txt 用 configure_file
+// 把 src/app.manifest 复制到构建目录，rc.exe 的工作目录正是构建目录，才找得到。
+1 24 "app.manifest"

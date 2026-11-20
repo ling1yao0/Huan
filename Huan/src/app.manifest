@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- 由 src/app.rc 以 RT_MANIFEST(24) 资源 1 嵌入 exe。
+     不用 CMake 的 /MANIFESTUAC：本项目 vcxproj 里 GenerateManifest 是 false，
+     link.exe 根本不生成清单，那个链接参数会被直接忽略（exe 里连一个清单都没有）。 -->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+    <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+        <security>
+            <requestedPrivileges>
+                <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+            </requestedPrivileges>
+        </security>
+    </trustInfo>
+    <!-- 声明支持的 Windows 版本。缺这段的话 Win10/11 会按 Vista 兼容模式跑，
+         文件/注册表虚拟化和 DPI 行为都会退化。 -->
+    <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+        <application>
+            <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/> <!-- Windows 10 / 11 -->
+            <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/> <!-- Windows 8.1 -->
+        </application>
+    </compatibility>
+</assembly>

@@ -12,6 +12,7 @@
 
 #include <QGuiApplication>
 #include <QScreen>
+#include <QToolTip>
 
 namespace {
 constexpr int kSectorCount = 8;
@@ -522,7 +523,35 @@ void WheelWindow::runActionAfterFocus(HWND target, const std::function<void()>& 
     }
 
     // 给目标窗口一点时间重新获得键盘焦点，再注入按键。
-    QTimer::singleShot(120, this, [action] { action(); });
+    QTimer::singleShot(150, this, [this, action, target] {
+        if (target && GetForegroundWindow() != target) {
+            // 系统第一次常常只是“表面答应”，这里补抢一次。
+            Win32Utils::forceForegroundWindow(target);
+        }
+        if (!target || GetForegroundWindow() == target) {
+            action();
+            return;
+        }
+
+        // 还是没抢到。这里不用 Sleep / msleep 干等 —— 那会把主线程和全局钩子一起卡住，
+        // 等于把上一个卡键问题请回来。交给下一轮事件循环再确认一次。
+        QTimer::singleShot(50, this, [this, action, target] {
+            if (GetForegroundWindow() != target) {
+                Win32Utils::forceForegroundWindow(target);
+            }
+            if (GetForegroundWindow() == target) {
+                action();
+                return;
+            }
+
+            // 熔断：目标窗口彻底不交出前台焦点（卡死，或被系统拒绝）。
+            // 宁可这次动作不执行，也不能把 Alt+F4 这类系统键发到桌面上 ——
+            // 那会直接弹出“关闭 Windows”的黑屏界面。
+            qWarning() << "【熔断】焦点抢夺失败，目标不是前台窗口，已放弃执行本次动作";
+            QToolTip::showText(QCursor::pos(),
+                               QStringLiteral("目标窗口未获得焦点，已取消本次动作"));
+        });
+    });
 }
 
 void WheelWindow::replayButton(MouseButton button, bool downOnly) {

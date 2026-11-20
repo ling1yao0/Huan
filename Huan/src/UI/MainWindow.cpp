@@ -39,6 +39,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QFrame>
 #include <QScrollArea>
@@ -1721,12 +1722,14 @@ QWidget* MainWindow::buildSystemTab() {
     auto* systemGroup = new QGroupBox(QStringLiteral("启动与系统"), content);
     auto* form = new QFormLayout(systemGroup);
 
-    autostartCheck = new QCheckBox(QStringLiteral("开机自动启动（当前用户，无需管理员权限）"), systemGroup);
+    autostartCheck = new QCheckBox(QStringLiteral("开机自动启动（任务计划，以管理员权限静默运行）"), systemGroup);
     form->addRow(autostartCheck);
 
     auto* note = new QLabel(
-        QStringLiteral("写入 HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run，不会触发 UAC。\n"
-                       "移动程序位置后，重新勾选保存即可更新启动路径。"),
+        QStringLiteral("通过 Windows 任务计划程序实现静默提权启动：任务名 %1，"
+                       "可在 taskschd.msc → 任务计划程序库 里看到，开机不会弹 UAC。\n"
+                       "移动程序位置后，重新勾选保存即可更新启动路径。")
+            .arg(AppConstants::AUTOSTART_TASK),
         systemGroup);
     note->setWordWrap(true);
     note->setStyleSheet(QStringLiteral("color: #666666;"));
@@ -2531,35 +2534,86 @@ void MainWindow::loadMouseBindings() {
 void MainWindow::loadAutostartState() {
     if (!autostartCheck) return;
 
-    QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-                  QSettings::NativeFormat);
-    // 用 applicationFilePath() 而不是 applicationDirPath() + 拼文件名：
-    // exe 换名时这里不用改，也不会拼错路径。
-    const QString exe = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
-    const QString expected = QStringLiteral("\"%1\"").arg(exe);
-    autostartCheck->setChecked(run.value(AppConstants::AUTOSTART_KEY).toString() == expected);
+    // 查任务计划里这个任务在不在，并且确认它指向的就是当前这个 exe。
+    // 只看"任务存在"不够：程序挪了位置后任务还在、路径已经失效，
+    // 复选框会一直显示勾选，开机却什么都不发生。
+    QProcess process;
+    // schtasks 是控制台程序，不加这个参数每次查询都会闪一下黑窗
+    // （loadAutostartState 挂在 loadData 里，切页就会跑，闪得很明显）。
+    process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= 0x08000000; // CREATE_NO_WINDOW
+    });
+    process.start(QStringLiteral("schtasks"),
+                  QStringList() << QStringLiteral("/Query")
+                                << QStringLiteral("/TN") << AppConstants::AUTOSTART_TASK
+                                << QStringLiteral("/XML"));
+    if (!process.waitForFinished(3000)) {
+        process.kill();
+        process.waitForFinished(1000);
+    }
+
+    const bool taskExists = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    const QString xml = QString::fromLocal8Bit(process.readAllStandardOutput());
+    const QString exeNative = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+
+    autostartCheck->blockSignals(true);
+    autostartCheck->setChecked(taskExists && xml.contains(exeNative, Qt::CaseInsensitive));
+    autostartCheck->blockSignals(false);
 }
 
 bool MainWindow::applyAutostartState() {
     if (!autostartCheck) return false;
 
-    QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
-                  QSettings::NativeFormat);
-    const QString key = AppConstants::AUTOSTART_KEY;
-
+    bool ok = true;
+    QProcess process;
+    // 同样禁止弹黑窗：保存设置时闪一下控制台窗口很刺眼。
+    process.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= 0x08000000; // CREATE_NO_WINDOW
+    });
     if (autostartCheck->isChecked()) {
         const QString exe = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
-        run.setValue(key, QStringLiteral("\"%1\"").arg(exe));
+        // /SC ONLOGON  用户登录时触发（桌面工具要的是这个，不是开机瞬间）
+        // /RL HIGHEST  以最高权限运行 —— 由任务计划服务自己拉起，不经过 UAC 弹窗
+        // /F           任务已存在时直接覆盖，挪了程序位置也不用先去手动删任务
+        // /TR 外面这对引号必须有：路径含空格（Program Files）时不带引号，
+        //     任务里存下来的命令行会被拆开，启动时根本找不到 exe。
+        process.start(QStringLiteral("schtasks"),
+                      QStringList() << QStringLiteral("/Create")
+                                    << QStringLiteral("/TN") << AppConstants::AUTOSTART_TASK
+                                    << QStringLiteral("/TR") << QStringLiteral("\"%1\"").arg(exe)
+                                    << QStringLiteral("/SC") << QStringLiteral("ONLOGON")
+                                    << QStringLiteral("/RL") << QStringLiteral("HIGHEST")
+                                    << QStringLiteral("/F"));
     } else {
-        run.remove(key);
+        process.start(QStringLiteral("schtasks"),
+                      QStringList() << QStringLiteral("/Delete")
+                                    << QStringLiteral("/TN") << AppConstants::AUTOSTART_TASK
+                                    << QStringLiteral("/F"));
+    }
+    if (!process.waitForFinished(5000)) {
+        process.kill();
+        process.waitForFinished(1000);
     }
 
-    // 旧名（mousemouse 时代）留下的启动项：新版界面读的是新 key，看不到它，
-    // 而它指向的旧 exe 已经不存在了，留着只会在开机时静默失败 —— 顺手清掉。
-    run.remove(QStringLiteral("ItervanceMouse"));
+    // 取消勾选走 /Delete：任务本来就不存在时 schtasks 会返回失败，但"没有这个任务"
+    // 正是我们想要的结果，不能把它当成设置失败弹提示。所以只有创建这一侧才判成败。
+    if (autostartCheck->isChecked()) {
+        ok = process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+        if (!ok) {
+            qWarning().noquote() << "自启任务创建失败:"
+                                 << QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+        }
+    }
 
+    // 旧版是写 HKCU\...\Run 自启的，那条现在留着只有坏处：exe 改成要求管理员权限后，
+    // 注册表方式拉起会被 UAC 拦下，开机白等一次失败。
+    QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                  QSettings::NativeFormat);
+    run.remove(AppConstants::AUTOSTART_KEY);
+    run.remove(QStringLiteral("ItervanceMouse"));
     run.sync();
-    return run.status() == QSettings::NoError;
+
+    return ok;
 }
 
 void MainWindow::addActionTypeItems(QComboBox* combo) const {
@@ -2858,7 +2912,8 @@ void MainWindow::saveData() {
         QStringLiteral("触发方式、鼠标绑定和系统设置已保存并立即生效。\n"
                        "轮盘绑定和动作库是拖拽/编辑时即时保存的。%1")
             .arg(autostartOk ? QString()
-                             : QStringLiteral("\n\n注意：开机自启写入注册表失败。")));
+                             : QStringLiteral("\n\n注意：开机自启任务创建失败，可能被组策略限制；"
+                                              "可到任务计划程序（taskschd.msc）里手动确认。")));
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

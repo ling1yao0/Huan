@@ -386,60 +386,73 @@ bool Win32Utils::sendKeySequence(const QString& sequence, QString* error) {
         return false;
     }
 
-    // 先按下修饰键，给目标程序留出识别组合键的时间。
-    QVector<INPUT> modifiersDown;
-    modifiersDown.reserve(chord.modifiers.size());
+    // 唯一的防关机防线：Alt+F4 落到桌面 / 任务栏时直接拦下来，一个字都不发。
+    //
+    // 这道检查原本挂在上一层的 ActionEngine 里，被删掉之后“在桌面上按 Alt+F4”
+    // 就是零拦截 —— 桌面窗口 Progman 收到 SC_CLOSE 会直接走“关闭 Windows”的
+    // 蓝屏倒计时。
+    //
+    // 放在这里而不是上层的原因：sendKeySequence 是所有发键路径的唯一出口
+    // （轮盘、动作页、全局热键、流水线子步骤都会经过），一处拦截、处处生效，
+    // ActionEngine 那边也就不需要任何特判。
+    // 而且只有这一种组合需要拦 —— Win+E / Win+R / Alt+Tab / Win+D 在桌面上
+    // 都是正常功能，一起拦掉就是功能倒退。
+    if (chord.modifiers.size() == 1 && chord.modifiers.first().vk == VK_MENU &&
+        chord.keys.size() == 1 && chord.keys.first().vk == VK_F4) {
+        const HWND fg = GetForegroundWindow();
+        if (!fg) {
+            if (error) *error = QStringLiteral("当前没有前台窗口，已拦截 Alt+F4");
+            return false;
+        }
+
+        WCHAR className[256] = {};
+        GetClassNameW(fg, className, 256);
+        const QString cls = QString::fromWCharArray(className);
+        if (cls == QLatin1String("Progman") || cls == QLatin1String("WorkerW") ||
+            cls == QLatin1String("Shell_TrayWnd") ||
+            cls == QLatin1String("Shell_SecondaryTrayWnd")) {
+            if (error) *error = QStringLiteral("焦点在桌面或任务栏，已拦截 Alt+F4 防止关机");
+            return false;
+        }
+    }
+
+    // 整条组合键打包成【一批】SendInput 一次发完：
+    // 修饰键按下 → 主键按下 → 主键逆序松开 → 修饰键逆序松开。
+    //
+    // 以前是"发一批、Sleep 一下、再发一批"，而这些函数跑在主线程上 ——
+    // 全局低级钩子（WH_KEYBOARD_LL / WH_MOUSE_LL）的回调也在主线程上执行，
+    // Sleep 期间系统等不到回调，超过阈值就丢弃事件。表现就是按下被记录、
+    // 抬起被丢掉，于是 Ctrl 一直按着，随手点个右键变成 Ctrl+右键（弹属性菜单）。
+    //
+    // SendInput 保证同一批事件按顺序进入目标线程的消息队列，顺序不依赖 Sleep。
+    QVector<INPUT> events;
+    events.reserve((chord.modifiers.size() + chord.keys.size()) * 2);
+
     for (const KeyInput& modifier : chord.modifiers) {
-        modifiersDown.append(makeKeyInput(modifier.vk, modifier.extended, false));
-        g_injectedModifiers.insert(modifier.vk);
+        events.append(makeKeyInput(modifier.vk, modifier.extended, false));
+        g_injectedModifiers.insert(modifier.vk); // 万一整批只发出去前半截，还要靠它兜底松开
     }
-
-    QVector<INPUT> modifiersUp;
-    modifiersUp.reserve(chord.modifiers.size());
-    for (int i = chord.modifiers.size() - 1; i >= 0; --i) {
-        modifiersUp.append(makeKeyInput(chord.modifiers[i].vk, chord.modifiers[i].extended, true));
-    }
-
-    if (!modifiersDown.isEmpty()) {
-        if (!flushInput(modifiersDown, error)) {
-            clearModifiers();
-            return false;
-        }
-        Sleep(12);
-    }
-
-    // === 修改点：依次按下所有主键 ===
     for (const KeyInput& key : chord.keys) {
-        const QVector<INPUT> mainDown{makeKeyInput(key.vk, key.extended, false)};
-        if (!flushInput(mainDown, error)) {
-            clearModifiers();
-            return false;
-        }
-        Sleep(10); // 给每个按键一点间隔
+        events.append(makeKeyInput(key.vk, key.extended, false));
     }
-    Sleep(20);
-    // === 修改点：依次松开所有主键（逆序） ===
     for (int i = chord.keys.size() - 1; i >= 0; --i) {
-        const KeyInput& key = chord.keys[i];
-        const QVector<INPUT> mainUp{makeKeyInput(key.vk, key.extended, true)};
-        if (!flushInput(mainUp, error)) {
-            clearModifiers();
-            return false;
-        }
-        Sleep(10);
+        events.append(makeKeyInput(chord.keys[i].vk, chord.keys[i].extended, true));
+    }
+    for (int i = chord.modifiers.size() - 1; i >= 0; --i) {
+        events.append(makeKeyInput(chord.modifiers[i].vk, chord.modifiers[i].extended, true));
     }
 
-    if (!chord.modifiers.isEmpty()) {
-        Sleep(12);
-        if (!flushInput(modifiersUp, error)) {
-            clearModifiers();
-            return false;
-        }
-        for (const KeyInput& modifier : chord.modifiers) {
-            g_injectedModifiers.remove(modifier.vk);
-        }
+    if (!flushInput(events, error)) {
+        // 一批里可能只发出去前半截（修饰键已按下、主键还没）。补一次松开，
+        // 免得真的卡在 Ctrl 按住 —— 那正是这套改动要消灭的现象。
+        clearModifiers();
+        return false;
     }
 
+    // 这一批里修饰键已经自己松开了，不需要再记着它们
+    for (const KeyInput& modifier : chord.modifiers) {
+        g_injectedModifiers.remove(modifier.vk);
+    }
     return true;
 }
 
@@ -488,33 +501,27 @@ bool Win32Utils::sendText(const QString& text, QString* error) {
 }
 
 void Win32Utils::sendKey(WORD vk, bool withCtrl) {
+    QVector<INPUT> events;
+    events.reserve(withCtrl ? 4 : 2);
     if (withCtrl) {
-        const QVector<INPUT> ctrlDown{makeKeyInput(VK_CONTROL, false, false)};
-        QString error;
-        if (!flushInput(ctrlDown, &error)) {
-            qWarning().noquote() << error;
-            return;
-        }
+        events.append(makeKeyInput(VK_CONTROL, false, false));
         g_injectedModifiers.insert(VK_CONTROL);
-        Sleep(10);
+    }
+    events.append(makeKeyInput(vk, false, false));
+    events.append(makeKeyInput(vk, false, true));
+    if (withCtrl) {
+        events.append(makeKeyInput(VK_CONTROL, false, true));
     }
 
-    const QVector<INPUT> keyDown{makeKeyInput(vk, false, false)};
     QString error;
-    if (!flushInput(keyDown, &error)) {
+    if (!flushInput(events, &error)) {
+        // 必须检查返回值：失败时 Ctrl 可能真的停在按下状态，
+        // 不补松开的话下一次点右键就变成 Ctrl+右键了。
         qWarning().noquote() << error;
         clearModifiers();
         return;
     }
-    Sleep(35);
-
-    const QVector<INPUT> keyUp{makeKeyInput(vk, false, true)};
-    flushInput(keyUp, &error);
-
     if (withCtrl) {
-        Sleep(10);
-        const QVector<INPUT> ctrlUp{makeKeyInput(VK_CONTROL, false, true)};
-        flushInput(ctrlUp, &error);
         g_injectedModifiers.remove(VK_CONTROL);
     }
 }
@@ -605,6 +612,11 @@ QString Win32Utils::captureSelectedText(int waitMs) {
 
     sendKey('C', true);
 
+    // 这里的 Sleep(10) 属于"轮询外部系统变化"，不是"给目标程序喘气"，性质不同：
+    // 剪贴板是别的进程异步写进去的，只能轮询等它。waitMs 默认 250，远低于
+    // 钩子超时阈值（约 1000ms），不会造成丢事件。
+    // 千万别换成 QCoreApplication::processEvents —— 那会在等待期间重入事件循环，
+    // 钩子回调、定时器、甚至正在执行的动作都可能被重入触发，比 Sleep 危险得多。
     QElapsedTimer timer;
     timer.start();
     while (timer.elapsed() < waitMs && GetClipboardSequenceNumber() == before) {
@@ -650,9 +662,17 @@ void Win32Utils::forceForegroundWindow(HWND hwnd) {
     if (!hwnd || !IsWindow(hwnd)) return;
     if (GetForegroundWindow() == hwnd) return;
 
+    // 最小化的窗口先还原，否则抢到焦点也只是个图标。
+    if (IsIconic(hwnd)) {
+        ShowWindow(hwnd, SW_RESTORE);
+    }
+
     const DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
     const DWORD targetThread = GetWindowThreadProcessId(hwnd, nullptr);
 
+    // 前台锁（SPI_GETFOREGROUNDLOCKTIMEOUT）会让 SetForegroundWindow 静默失败。
+    // 把自己的输入队列临时挂到前台线程上，等于宣称“我本来就在前台”，
+    // 在这个窗口期内 SetForegroundWindow / BringWindowToTop / SetFocus 才真的生效。
     bool attached = false;
     if (foregroundThread && targetThread && foregroundThread != targetThread) {
         attached = AttachThreadInput(foregroundThread, targetThread, TRUE) != FALSE;
@@ -660,6 +680,31 @@ void Win32Utils::forceForegroundWindow(HWND hwnd) {
 
     SetForegroundWindow(hwnd);
     BringWindowToTop(hwnd);
+    // SwitchToThisWindow 是未文档化 API（MSDN 写着“不供应用程序使用”），
+    // 但它就是 Alt+Tab 的实现路径，能绕过前台锁，是抢焦点最有效的一招。
+    SwitchToThisWindow(hwnd, TRUE);
+    // SetFocus 只在同一线程内有效，所以必须放在 attach 窗口期内。
+    SetFocus(hwnd);
+
+    // 常规手段没成功时才用 Alt 欺骗：注入一对 Alt 按下/抬起，让系统认为
+    // “用户正在交互”，从而放行下一次 SetForegroundWindow。
+    // 不放在最前面每次都发的原因是：普通窗口会平白多收到一次无关按键，
+    // 部分程序收到 WM_SYSKEYDOWN/WM_SYSKEYUP 还会进菜单模式（标题栏变色、
+    // 菜单栏抢焦点）；如果键盘钩子没过滤 LLKHF_INJECTED，这个 Alt 还会回到
+    // 本程序自己的按键判定里。
+    if (GetForegroundWindow() != hwnd) {
+        QVector<INPUT> altEvents;
+        altEvents.append(makeKeyInput(VK_MENU, false, false));
+        altEvents.append(makeKeyInput(VK_MENU, false, true));
+        g_injectedModifiers.insert(VK_MENU); // 只发出去按下那半截时，还要靠它兜底松开
+        if (flushInput(altEvents, nullptr)) {
+            g_injectedModifiers.remove(VK_MENU);
+        } else {
+            clearModifiers();
+        }
+        SetForegroundWindow(hwnd);
+        SwitchToThisWindow(hwnd, TRUE);
+    }
 
     if (attached) {
         AttachThreadInput(foregroundThread, targetThread, FALSE);

@@ -10,10 +10,14 @@ namespace AppConstants {
     // 工程代号仍是 Huan（CMake 项目名、Huan.exe、单实例 key、data.db）。
     inline const QString APP_NAME = QStringLiteral("Huan");
 
-    inline const QString APP_VERSION = QStringLiteral("1.1.1"); // 版本号：用于窗口标题 / 托盘提示 / 后续更新检查
+    inline const QString APP_VERSION = QStringLiteral("1.1.2"); // 版本号：用于窗口标题 / 托盘提示 / 后续更新检查
 
-    // 开机自启项在 HKCU\...\Run 下使用的值名
+    // 旧版用注册表 HKCU\...\Run 做自启，值名就是这个。现在自启改走任务计划，
+    // 这里的名字只用于把旧残留清干净（写入端已经不再用它）。
     inline const QString AUTOSTART_KEY = QStringLiteral("Huan");
+
+    // 任务计划里的任务名：taskschd.msc → 任务计划程序库 下能直接看到这一个。
+    inline const QString AUTOSTART_TASK = QStringLiteral("HuanAutoStart");
 
     // 当前进程的 exe 文件名（原样大小写，如 "Huan.exe"）。
     // 代码里所有"这是不是我自己"的判断都走这里，别再硬编码 exe 名 ——

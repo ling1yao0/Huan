@@ -108,8 +108,11 @@ target_link_libraries(Huan_input_tests PRIVATE Qt6::Widgets user32)
 
 # exe 图标：app.rc 里的 ICON 文件名按 /I 搜索。ico 现在在 resources/Logo and Main Icon/ 下，
 # /I 必须指向这个子目录（含空格，靠转义引号传参），而不是 resources 根目录。
+# 清单文件复制到构建目录，让 rc.exe 用相对名就能打开（它的工作目录是构建目录）。
+configure_file(src/app.manifest "${CMAKE_CURRENT_BINARY_DIR}/app.manifest" COPYONLY)
+
 set_source_files_properties(src/app.rc PROPERTIES
-    COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/Logo and Main Icon\"")
+    COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/Logo and Main Icon\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/src\"")
 
 # 告诉编译器到哪里找头文件
 # target_include_directories(...)	告诉编译器到哪里找头文件
@@ -125,6 +128,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE src src/HOOK src/ENGINE src/U
 # Qt6::Widgets	表示链接 Qt Widgets 库
 # Qt6::Sql	表示链接 Qt Sql 库
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Sql user32 shell32)
+
+# 提权改由 src/app.manifest 实现（经 src/app.rc 以 RT_MANIFEST 资源嵌入 exe）。
+# 原来的 /MANIFESTUAC 在这里不生效：本项目 vcxproj 里 GenerateManifest 为 false，
+# link.exe 不生成清单，那个参数被直接忽略 —— exe 里连一个清单都没有，自然没有盾牌。
 
 # 告诉 C++ 编译器：定义一个叫 APP_NAME 的宏，值是 "${PROJECT_NAME}"
 #target_compile_definitions(${PROJECT_NAME} PRIVATE APP_NAME="${PROJECT_NAME}")

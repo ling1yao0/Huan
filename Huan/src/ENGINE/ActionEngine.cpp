@@ -237,6 +237,11 @@ void ActionEngine::runKeySequenceAction(const QString& payload, const QString& s
         return;
     }
 
+    // 这里不再对 Alt+F4 做任何特殊处理：聚焦是否到位交给
+    // WheelWindow::runActionAfterFocus 负责（抢不到焦点就熔断、根本不发键），
+    // 发键本身统一走 sendKeySequence。
+    // 在桌面上执行 Alt+F4 会被 sendKeySequence 底层的防关机检查拦下，
+    // 所以这里不需要任何特判。
     QString error;
     if (!Win32Utils::sendKeySequence(sequence, &error)) {
         done(false, error);

@@ -1,0 +1,16 @@
+{
+	"folders": [
+        {
+            "name": "Huan",
+            "path": "."
+        }
+    ],
+    "settings": {
+            "cmake.configureSettings": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.12.0/msvc2022_64"
+    },
+        "hide-files.files": [
+            "Huan"
+        ]
+    }
+}
